@@ -1,6 +1,7 @@
 """Manually normalized Manhattan distance and human-readable change metrics."""
 
 from collections.abc import Mapping
+from math import isfinite
 from types import MappingProxyType
 
 from core.model import Application, FEATURES, nonnegative_finite
@@ -32,11 +33,14 @@ def distance_contributions(
 ) -> dict[str, float]:
     """Return |x_j - x'_j| / scale_j for each predictive feature."""
     factors = validate_normalization(normalization)
-    return {
+    contributions = {
         feature: abs(getattr(original, feature) - getattr(candidate, feature))
         / factors[feature]
         for feature in FEATURES
     }
+    if not isfinite(sum(contributions.values())):
+        raise ValueError("Distance exceeds floating-point range; use larger normalization scales.")
+    return contributions
 
 
 def normalized_manhattan(

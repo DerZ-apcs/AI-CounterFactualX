@@ -13,12 +13,15 @@ class Constraints:
     max_income_increase: float = 5.0
     max_experience_increase: float = 0.25
     can_obtain_certification: bool = True
+    income_cannot_decrease: bool = False
 
     def __post_init__(self) -> None:
         nonnegative_finite(self.max_income_increase, "Maximum income increase")
         nonnegative_finite(self.max_experience_increase, "Maximum experience increase")
         if not isinstance(self.can_obtain_certification, bool):
             raise ValueError("Certification permission must be a boolean.")
+        if not isinstance(self.income_cannot_decrease, bool):
+            raise ValueError("Income non-decrease policy must be a boolean.")
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,8 @@ def evaluate_feasibility(
         violations.append("Birth year is immutable and must remain unchanged.")
     income_increase = candidate.income - original.income
     experience_increase = candidate.experience - original.experience
+    if limits.income_cannot_decrease and income_increase < 0:
+        violations.append("Income cannot decrease.")
     if _exceeds(income_increase, limits.max_income_increase):
         violations.append(
             f"Income increase {income_increase:g} exceeds the allowed "

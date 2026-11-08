@@ -4,7 +4,9 @@ import streamlit as st
 
 from core.constraints import Constraints
 from core.generator import evaluate_candidate
+from core.generator import SearchTrace
 from core.model import Application
+from analytics_views import optimality_explanation
 
 
 def render_details(
@@ -12,6 +14,9 @@ def render_details(
     normalization: dict[str, float],
     lambda_value: float,
     constraints: Constraints,
+    *,
+    trace: SearchTrace | None = None,
+    enforce_feasibility: bool = True,
 ) -> None:
     """Preserve the V1 mathematical content in collapsed, focused sections."""
     with st.expander("Mathematical Details", expanded=False):
@@ -32,6 +37,9 @@ def render_details(
             "Normalization factors are **manual synthetic scales**, not empirical MAD values. "
             "Birth year is excluded from prediction, distance, and sparsity."
         )
+        if trace is not None:
+            optimality_explanation(trace, normalization, constraints,
+                                   enforce_feasibility=enforce_feasibility, scope="Current recommendation")
     with st.expander("Search Algorithm", expanded=False):
         st.code(
             "validate original, scales, lambda, and practical limits\n"
@@ -59,15 +67,17 @@ def render_details(
             "**Complexity:** at most 2³ = 8 combinations; O(k × 2ᵏ) evaluation and "
             "O(2ᵏ log 2ᵏ) ranking for k binary threshold conditions. Here k = 3. "
             "Numeric input steps are editing conveniences, not a continuous search grid.\n\n"
-            "Trace IDs Tn identify rejected product-order points. CF IDs identify accepted changes "
-            "in current distance order. The unchanged original is inspected but never recommended."
+            "Trace IDs Tn identify rejected product-order points. Dashboard CF IDs are assigned "
+            "using default-scale ranking for the current original and remain stable when scales "
+            "or scenarios change. The V2 enumeration API retains rank-based IDs for compatibility. "
+            "The unchanged original is inspected but never recommended."
         )
     with st.expander("Assumptions & Limitations", expanded=False):
         st.markdown("**The nearest counterfactual is not necessarily the nearest feasible counterfactual.**")
         st.markdown(
             f"- **Three-month assumptions:** income increase ≤ {constraints.max_income_increase:g} "
             f"million VND/month; experience increase ≤ {constraints.max_experience_increase:g} years "
-            "and no decrease; certification requires permission; birth year never changes.\n"
+            "and no decrease; income cannot decrease in practical scenarios; certification requires permission; birth year never changes.\n"
             "- All limits are relative to the current original. Turning constraints OFF ignores only "
             "optional practical limits. Both comparison cards always solve their labeled problems.\n"
             "- The classifier is synthetic; income as a hiring feature can introduce unfair bias.\n"

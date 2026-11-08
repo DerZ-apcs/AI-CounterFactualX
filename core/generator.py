@@ -29,6 +29,12 @@ from core.model import (
 TARGET = 1
 
 
+def candidate_order(item: "Candidate") -> tuple[float, int, float, float, int]:
+    """Deterministic metric ranking, independent of a candidate's display ID."""
+    return (item.distance, item.sparsity, item.application.income,
+            item.application.experience, item.application.certification)
+
+
 @dataclass(frozen=True)
 class Candidate:
     """One evaluated application, with validity independent of feasibility."""
@@ -149,15 +155,7 @@ def enumerate_search(
             )
         )
     candidates = [item for item in evaluated if item.application != original and item.valid]
-    candidates.sort(
-        key=lambda item: (
-            item.distance,
-            item.sparsity,
-            item.application.income,
-            item.application.experience,
-            item.application.certification,
-        )
-    )
+    candidates.sort(key=candidate_order)
     ranked = tuple(replace(item, candidate_id=f"CF{index}") for index, item in enumerate(candidates, 1))
     identifiers = {item.application: item.candidate_id for item in ranked}
     evaluated = tuple(
@@ -182,4 +180,4 @@ def select_recommendation(
         and item.feasibility.immutable_preserved
         and (not enforce_feasibility or item.feasibility.feasible)
     ]
-    return min(eligible, key=lambda item: (item.distance, item.sparsity, item.candidate_id), default=None)
+    return min(eligible, key=candidate_order, default=None)
