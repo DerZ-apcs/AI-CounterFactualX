@@ -2,7 +2,7 @@ import pytest
 
 from core.generator import generate_counterfactuals, select_recommendation
 from core.model import Application, predict
-from visualization import decision_region_figure
+from visualization import candidate_distance_figure, decision_region_figure
 
 
 @pytest.mark.parametrize("certification", [0, 1])
@@ -55,3 +55,31 @@ def test_axes_include_large_original_and_candidates():
 def test_invalid_certification_slice():
     with pytest.raises(ValueError):
         decision_region_figure(Application(), [], 2)
+
+
+def test_comparison_and_selection_markers_obey_slices():
+    candidates = generate_counterfactuals(Application())
+    closest = select_recommendation(candidates, enforce_feasibility=False)
+    feasible = select_recommendation(candidates)
+    selected = candidates[2]
+    for cert in (0, 1):
+        figure = decision_region_figure(Application(), candidates, cert, feasible,
+                                        selected=selected, closest=closest, feasible=feasible)
+        for name, item in (("Closest CF", closest), ("Closest feasible", feasible), ("Selected", selected)):
+            matching = [trace for trace in figure.data if trace.name == name]
+            assert bool(matching) == (item.application.certification == cert)
+            if matching:
+                assert matching[0].x == (item.application.income,)
+                assert matching[0].y == (item.application.experience,)
+        for trace in figure.data:
+            if trace.name in ("Feasible CF", "Infeasible CF"):
+                assert all("Feasible:" in text for text in trace.hovertext)
+
+
+def test_distance_comparison_uses_current_metric_and_selected_candidate():
+    candidates = generate_counterfactuals(Application(), normalization={"income": 10, "experience": .1, "certification": 1})
+    figure = candidate_distance_figure(candidates, candidates[0])
+    assert list(figure.data[0].x) == pytest.approx([1.1, 10.1, 11, 11.1])
+    assert list(figure.data[0].y) == ["CF1", "CF2", "CF3", "CF4"]
+    assert list(figure.data[0].marker.line.width) == [3, 0, 0, 0]
+    assert figure.data[0].customdata[0][3] == "Yes"

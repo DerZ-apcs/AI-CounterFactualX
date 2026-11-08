@@ -1,4 +1,4 @@
-# Counterfactual Explorer
+# Counterfactual Explorer · V2
 
 **The nearest counterfactual is not necessarily the nearest feasible counterfactual.**
 
@@ -8,6 +8,42 @@ AI-CounterFactualX, this project uses a tiny synthetic application-screening mod
 so the prediction, counterfactual search, and feasibility assumptions can all be
 explained in two minutes. No training, database, backend service, or API key is needed.
 After installation, the demo works offline; the paper hyperlink is optional reading.
+
+## V2 dashboard
+
+**Results first; details on demand.** V2 upgrades the interface while retaining
+the V1 classifier, distance formula, practical constraints, and optimal results.
+
+- One input row with income, experience, certification, Generate, and Constraints.
+- Compact prediction/condition badges and side-by-side **Closest CF** and
+  **Closest Feasible CF** cards, populated immediately at startup.
+- **Settings ⚙** popover for practical limits; collapsed **Additional Settings**
+  for manual normalization scales, lambda, and optional immutable context.
+- **Decision Boundary:** interactive certification selector, hover details,
+  selected-candidate highlighting, and separate markers for both optima.
+- **Search Process:** Original → Thresholds → Candidates → Evaluation →
+  Feasibility → Result, with Previous Step, Next Step, and Reset controls.
+  The actual default enumeration includes **all eight combinations**: four
+  rejected points (including the original) and four accepted changes.
+- **Candidates:** sortable, selectable compact table; feasible-only filter;
+  horizontal distance-sensitivity bars; collapsed exact calculations.
+- Mathematical Details, Search Algorithm, and Assumptions & Limitations are
+  collapsed by default. Cards stack on narrow screens; custom CSS is scoped
+  to the dashboard's own elements rather than Streamlit internals.
+
+Both cards **always** solve their labeled problems. The main Constraints switch
+only selects which result is the active recommendation; it never changes the
+definition of either card. With no feasible solution the right card explicitly
+reports that, even when the switch is OFF.
+
+Selecting a table row or candidate dropdown highlights the same application and
+navigates to its certification slice. Switching slices manually never places the
+selected point on an incompatible slice. Changing original inputs, constraints,
+scales, or lambda refreshes the real trace and resets the search step/selection;
+changing the active constraint policy resets the presentation state as well.
+Tab navigation retains inputs. Generate explicitly recalculates and restarts the
+trace; it is not required to reveal initial results. Manual stepping is supported;
+there is no simulated autoplay or optimization animation.
 
 ## Installation and execution
 
@@ -45,18 +81,21 @@ are rendered locally; no external images, fonts, or model services are required.
 
 1. **0:00–0:20:** Keep `(income, experience, certification) = (24, 2, 0)`.
    The original is **Rejected**, satisfying **0 / 3** conditions.
-2. **0:20–0:50:** Click **Generate Counterfactuals**. Point out the nearest
-   valid application `(25, 3, 0)` and its distance **0.30**.
-3. **0:50–1:20:** Toggle **Enable Real-world Constraints** OFF and ON.
+2. **0:20–0:40:** Compare the two cards immediately: nearest valid `(25, 3, 0)`,
+   distance **0.30**, versus nearest feasible `(25, 2, 1)`, distance **1.10**.
+3. **0:40–1:00:** Toggle **Constraints** OFF and ON.
    With the three-month limits ON, the recommendation becomes `(25, 2, 1)`,
    distance **1.10**: an extra year of experience cannot fit within a 0.25-year limit.
-4. **1:20–1:45:** Compare the certification slices and inspect a candidate's
-   distance calculation. The prediction-valid and feasible labels are different concepts.
-5. **1:45–2:00:** Disallow obtaining certification: no feasible counterfactual
-   exists. Conclude with the central message above.
+4. **1:00–1:25:** Switch certification slices; open **Search Process** and choose
+   Evaluation to inspect all eight points, not just the accepted ones.
+5. **1:25–1:45:** In Settings → Additional Settings, set experience normalization
+   to **0.1**. The closest valid point changes to `(25, 2, 1)`; Candidates shows
+   the updated distance bars. Restore **5** for the original metric.
+6. **1:45–2:00:** In Settings, disallow obtaining certification: no feasible
+   counterfactual exists under defaults. Conclude with the central message above.
 
-Constraints start **enabled**. After the first generation, changing any input,
-scale, lambda, or feasibility setting immediately recomputes the results. The
+Constraints start **enabled**. Changing any input, scale, lambda, or feasibility
+setting immediately recomputes the results, including before Generate is clicked. The
 table remains sortable and includes infeasible accepted candidates for comparison.
 
 ## Model and mathematical formulation
@@ -127,8 +166,9 @@ for each feature:
     if its condition fails: include the exact minimum satisfying value
 for point in itertools.product(all unique feature-value sets):
     preserve immutable context and validate domains
-    skip unchanged original and rejected points
     compute validity, distance contributions, sparsity, L, changes, feasibility
+    record the point in the complete diagnostic trace
+exclude unchanged original and rejected points from generated explanations
 rank accepted candidates by distance
 select the closest eligible candidate (filter by feasibility when enabled)
 if none is eligible: explicitly report no feasible counterfactual
@@ -137,6 +177,11 @@ if none is eligible: explicitly report no feasible counterfactual
 There are at most **eight** combinations. Already satisfied conditions never
 receive unnecessary changes. Distance ties prefer lower sparsity, then a stable
 feature-value ordering; IDs reflect the current ranking.
+`enumerate_search` is the shared implementation used by `generate_counterfactuals`
+and the step viewer, rather than an independent demonstration sequence. Its
+`SearchTrace` retains product-order evaluations and distance-ranked accepted
+changes. Rejected trace IDs are `Tn`; accepted changes use current `CFn` IDs.
+Already-accepted originals stop before enumeration with empty result/trace lists.
 
 ### Why this enumeration finds an optimum here
 
@@ -197,24 +242,34 @@ That example adapts to the current original and settings.
 ## Architecture and verification
 
 ```text
-app.py                    Streamlit inputs, comparison table, recommendations, teaching notes
-visualization.py          Exact Plotly regions and certification-specific point layers
+app.py                    Compact controls/cards, selection, search stepper, synchronized state
+dashboard_details.py      Collapsed mathematical explanations, assumptions, attribution
+visualization.py          Exact Plotly regions, point layers, distance-sensitivity bars
 core/model.py             Validated Application and two-of-three classifier
 core/distance.py          Manual normalization, contributions, sparsity, change descriptions
 core/constraints.py       Relative practical limits and immutable checks
-core/generator.py         Threshold enumeration, evaluation, ranking, recommendation
+core/generator.py         Shared threshold enumeration/trace, ranking, recommendation
 tests/test_model.py       Thresholds, domains, contextual independence
 tests/test_distance.py    Worked examples, scales, changed-feature metrics
 tests/test_constraints.py Relative limits, no-solution cases, immutable enforcement
 tests/test_generator.py   Continuous inputs, validity-first selection, ranking, edge cases
+tests/test_search_trace.py Complete unsuccessful/successful enumeration and trace consistency
 tests/test_visualization.py Exact regions, certification slices, adaptive axes
-tests/test_app.py         Streamlit AppTest: controls, reactive results, errors, context
+tests/test_app.py         Streamlit AppTest: cards, controls, search sync, selection, context
 ```
 
 Business logic has no Streamlit dependency. Automated UI tests require no browser
 or running server. Plotly views use exact rectangles: with `C = 0`, acceptance
 requires both income and experience thresholds; with `C = 1`, either suffices.
-Both slices share axis extents. Points are filtered by certification before plotting.
+Both slices share axis extents. Points and highlight overlays are filtered by
+certification before plotting. The UI presents one selectable slice at a time.
+
+V2 verification includes automated core/figure tests and Streamlit AppTest,
+plus a headless Chromium check at **1366×768** and **390×844**: both default cards
+and the beginning of the decision chart fit the desktop viewport, narrow-screen
+cards stack without horizontal overflow, and tab/search/constraint interactions
+work without browser errors. No browser automation package is required to run
+the app or the pytest suite.
 
 ## Academic context, limitations, and attribution
 

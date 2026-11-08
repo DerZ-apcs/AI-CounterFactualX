@@ -48,6 +48,30 @@ class Candidate:
         return self.prediction == TARGET
 
 
+@dataclass(frozen=True)
+class SearchTrace:
+    """Actual enumeration, including unchanged/rejected points before filtering.
+
+    ``evaluated`` follows itertools.product order. ``candidates`` is the same
+    distance-ranked valid-only output exposed by generate_counterfactuals.
+    An already-accepted original short-circuits with no enumerated points.
+    """
+
+    original: Application
+    options: dict[str, tuple[float | int, ...]]
+    evaluated: tuple[Candidate, ...]
+    candidates: tuple[Candidate, ...]
+
+
+def threshold_options(original: Application) -> dict[str, tuple[float | int, ...]]:
+    """Expose the original enumeration rule without introducing a search grid."""
+    return {
+        "income": tuple(sorted({original.income, max(original.income, INCOME_THRESHOLD)})),
+        "experience": tuple(sorted({original.experience, max(original.experience, EXPERIENCE_THRESHOLD)})),
+        "certification": tuple(sorted({original.certification, 1})),
+    }
+
+
 def evaluate_candidate(
     original: Application,
     application: Application,
@@ -88,29 +112,43 @@ def generate_counterfactuals(
     Practical feasibility does not hide candidates from the comparison table;
     it is enforced separately by select_recommendation.
     """
+    return list(enumerate_search(
+        original, normalization=normalization, lambda_value=lambda_value,
+        constraints=constraints,
+    ).candidates)
+
+
+def enumerate_search(
+    original: Application,
+    *,
+    normalization: Mapping[str, float] | None = None,
+    lambda_value: float = 10.0,
+    constraints: Constraints | None = None,
+) -> SearchTrace:
+    """Run the shared V1 enumeration with an inspectable computation trace.
+
+    Evaluation of rejected points is diagnostic only: recommendation still
+    filters the unchanged original and all non-target points before ranking.
+    """
     factors = validate_normalization(normalization)
     nonnegative_finite(lambda_value, "Lambda")
+    options = threshold_options(original)
     if predict(original) == TARGET:
-        return []
-    incomes = sorted({original.income, max(original.income, INCOME_THRESHOLD)})
-    experiences = sorted(
-        {original.experience, max(original.experience, EXPERIENCE_THRESHOLD)}
-    )
-    certifications = sorted({original.certification, 1})
-    candidates = []
-    for income, experience, certification in product(incomes, experiences, certifications):
+        return SearchTrace(original, options, (), ())
+    evaluated = []
+    for index, (income, experience, certification) in enumerate(product(*options.values()), 1):
         application = Application(income, experience, certification, original.birth_year)
-        if application == original or predict(application) != TARGET:
-            continue
-        candidates.append(
+        evaluated.append(
             evaluate_candidate(
                 original,
                 application,
                 normalization=factors,
                 lambda_value=lambda_value,
                 constraints=constraints,
+                candidate_id="Original" if application == original else f"T{index}",
             )
         )
+    candidates = [item for item in evaluated if item.application != original and item.valid]
     candidates.sort(
         key=lambda item: (
             item.distance,
@@ -120,7 +158,13 @@ def generate_counterfactuals(
             item.application.certification,
         )
     )
-    return [replace(item, candidate_id=f"CF{index}") for index, item in enumerate(candidates, 1)]
+    ranked = tuple(replace(item, candidate_id=f"CF{index}") for index, item in enumerate(candidates, 1))
+    identifiers = {item.application: item.candidate_id for item in ranked}
+    evaluated = tuple(
+        replace(item, candidate_id=identifiers.get(item.application, item.candidate_id))
+        for item in evaluated
+    )
+    return SearchTrace(original, options, evaluated, ranked)
 
 
 def select_recommendation(

@@ -1,268 +1,370 @@
-"""Counterfactual Explorer: a lightweight, offline-capable academic demo.
+"""Counterfactual Explorer V2: compact dashboard over the validated V1 model."""
 
-Run with: python -m streamlit run app.py
-All calculations live in core/; this module only orchestrates the interface.
-"""
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from core.constraints import Constraints
-from core.generator import Candidate, evaluate_candidate, generate_counterfactuals, select_recommendation
-from core.model import Application, condition_results, predict
-from visualization import decision_region_figure
+from core.generator import Candidate, SearchTrace, enumerate_search, select_recommendation
+from core.model import Application, FEATURES, condition_results, predict
+from dashboard_details import render_details
+from visualization import candidate_distance_figure, decision_region_figure
+
+STEPS = ("Original", "Thresholds", "Candidates", "Evaluation", "Feasibility", "Result")
+CSS = """
+<style>
+.cfx-title {font-size:1.6rem; font-weight:750; margin:0; line-height:1.3}
+.cfx-title small {font-size:.7rem; color:#64748b; vertical-align:middle}
+.cfx-status {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem;
+  padding:.45rem .7rem; background:#f1f5fa; border-radius:8px; font-size:.85rem}
+.cfx-status .pass {color:#126344} .cfx-status .fail {color:#a83131}
+.cfx-card {border:1px solid #dce3ec; border-radius:12px; padding:.65rem .85rem;
+  background:#fff; min-width:0; height:100%; box-sizing:border-box}
+.cfx-card.active {border:2px solid #6e37a8; padding:calc(.65rem - 1px) calc(.85rem - 1px)}
+.cfx-card header {display:flex; justify-content:space-between; flex-wrap:wrap; gap:.25rem;
+  align-items:center; font-size:.85rem; font-weight:650}
+.cfx-card .tag {font-size:.65rem; color:#6e37a8; background:#f2eafa; border-radius:5px; padding:.1rem .35rem}
+.cfx-card .values {display:flex; justify-content:space-between; flex-wrap:wrap;
+  align-items:center; gap:.4rem; margin:.25rem 0; font-size:1.55rem; font-weight:650}
+.cfx-card .distance {font-size:1.2rem} .cfx-card small {font-size:.72rem; color:#64748b; font-weight:400}
+.cfx-card .changes {font-size:.78rem; color:#45556c; line-height:1.5}
+.cfx-nodes {display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:.5rem}
+.cfx-node {border:1px solid #dce3ec; border-radius:8px; padding:.6rem; font-size:.8rem}
+.cfx-node b {display:block; margin-bottom:.2rem} .cfx-node small {color:#64748b}
+@media(max-width:600px) {
+  .cfx-title {font-size:1.3rem} .cfx-card .values {font-size:1.3rem}
+  .cfx-status {gap:.35rem .65rem} .cfx-nodes {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
+"""
 
 
 def point_label(application: Application) -> str:
+    """Compact (income, experience, certification) label; no search rounding."""
     return f"({application.income:g}, {application.experience:g}, {application.certification:g})"
 
 
-def recommendation_card(label: str, candidate: Candidate | None) -> None:
-    """Use semantic Streamlit elements so recommendations are also testable."""
-    if candidate is None:
-        st.metric(label, "None", "No feasible counterfactual", delta_color="off")
+def short_changes(original: Application, candidate: Candidate) -> str:
+    """Show signed changes without duplicating full feature descriptions."""
+    return ", ".join(
+        f"{label}{getattr(candidate.application, name) - getattr(original, name):+g}"
+        for name, label in zip(FEATURES, ("I", "E", "C"))
+        if getattr(candidate.application, name) != getattr(original, name)
+    ) or "Unchanged"
+
+
+def settings() -> tuple[Constraints, dict[str, float], float, int | None]:
+    """All detailed configuration stays inside the header popover."""
+    with st.popover("Settings ⚙", width="stretch"):
+        st.markdown("**Three-month limits**")
+        income_limit = st.number_input("Max income increase (M VND/month)", min_value=0.0,
+                                       value=5.0, step=.5, key="max_income")
+        experience_limit = st.number_input("Max experience increase (years)", min_value=0.0,
+                                           value=.25, step=.05, key="max_experience",
+                                           help="Experience cannot decrease.")
+        can_certify = st.checkbox("Certification can be obtained", value=True, key="can_certify")
+        with st.expander("Additional Settings", expanded=False):
+            st.caption("Manual positive scales, not empirical MAD values.")
+            normalization = {
+                name: st.number_input(f"{name.title()} normalization", min_value=0.0,
+                                      value=default, step=.1, format="%g", key=f"scale_{name}")
+                for name, default in zip(FEATURES, (10.0, 5.0, 1.0))
+            }
+            lambda_value = st.number_input("Lambda (diagnostic only)", min_value=0.0,
+                                           value=10.0, step=1.0, key="lambda_value",
+                                           help="Never replaces the requirement that a recommendation is Accepted.")
+            birth_year = None
+            if st.checkbox("Include birth year", key="include_birth_year"):
+                birth_year = st.number_input("Birth year (immutable context)", min_value=1,
+                                              value=2000, step=1, key="birth_year",
+                                              help="Not predictive; preserved in every counterfactual.")
+    return Constraints(income_limit, experience_limit, can_certify), normalization, lambda_value, birth_year
+
+
+def recommendation_card(
+    title: str, original: Application, candidate: Candidate | None, *, active: bool, accepted: bool,
+) -> None:
+    """A small semantic card with CSS scoped only to our own elements."""
+    if accepted:
+        value, distance, changes = "Not needed", "—", "Original already Accepted"
+    elif candidate is None:
+        value, distance, changes = "No feasible counterfactual", "—", "Review limits in Settings"
     else:
-        st.metric(label, point_label(candidate.application),
-                  f"{candidate.candidate_id} · distance {candidate.distance:.2f}", delta_color="off")
+        value = point_label(candidate.application)
+        distance = f"{candidate.distance:.2f}"
+        changes = f"{candidate.candidate_id} · {short_changes(original, candidate)}"
+    tag = '<span class="tag">Recommended</span>' if active and candidate else ""
+    st.html(
+        f'<section class="cfx-card{" active" if active else ""}" aria-label="{escape(title)}">'
+        f'<header>{escape(title)}{tag}</header>'
+        f'<div class="values"><span title="(Income, Experience, Certification)">{escape(value)}</span>'
+        f'<span class="distance"><small>Distance </small>{distance}</span></div>'
+        f'<div class="changes">{escape(changes)} <small>· (I, E, C)</small></div></section>'
+    )
 
 
-def candidate_table(candidates: list[Candidate]) -> pd.DataFrame:
-    """Keep numeric columns numeric for correct client-side sorting."""
+def exclusion_summary(original: Application, candidate: Candidate, constraints: Constraints) -> str:
+    """Summarize an actual violation; full diagnostics remain in candidate details."""
+    violation = candidate.feasibility.violations[0]
+    if violation.startswith("Experience increase"):
+        reason = (f"experience {candidate.application.experience - original.experience:+g} > "
+                  f"+{constraints.max_experience_increase:g} years")
+    elif violation.startswith("Income increase"):
+        reason = (f"income {candidate.application.income - original.income:+g} > "
+                  f"+{constraints.max_income_increase:g} M VND")
+    elif violation.startswith("Obtaining certification"):
+        reason = "certification unavailable"
+    else:
+        reason = violation
+    return f"{candidate.candidate_id} excluded: {reason}."
+
+
+def synchronize(
+    original: Application, constraints: Constraints, normalization: dict[str, float],
+    lambda_value: float, enabled: bool, recalculate: bool,
+) -> SearchTrace:
+    """Reuse tiny results, but reset stale steps and selections on any problem edit."""
+    problem = (original, constraints, tuple(normalization.items()), lambda_value)
+    if problem != st.session_state.get("problem_signature") or recalculate:
+        st.session_state["search_trace"] = enumerate_search(
+            original, normalization=normalization, lambda_value=lambda_value, constraints=constraints,
+        )
+        st.session_state["problem_signature"] = problem
+    trace = st.session_state["search_trace"]
+    closest = select_recommendation(trace.candidates, enforce_feasibility=False)
+    feasible = select_recommendation(trace.candidates, enforce_feasibility=True)
+    recommended = feasible if enabled else closest
+    view_signature = (problem, enabled)
+    if view_signature != st.session_state.get("view_signature") or recalculate:
+        st.session_state["search_step"] = STEPS[0]
+        selected = recommended or closest
+        st.session_state["selected_candidate"] = selected.candidate_id if selected else "None"
+        st.session_state["view_certification"] = selected.application.certification if selected else original.certification
+        st.session_state["view_signature"] = view_signature
+        st.session_state["revision"] = st.session_state.get("revision", 0) + 1
+    st.session_state["recommendation"] = recommended
+    return trace
+
+
+def select_candidate(identifier: str) -> None:
+    """Share selection across the table and chart; navigate to the matching slice."""
+    item = next((item for item in st.session_state["search_trace"].candidates
+                 if item.candidate_id == identifier), None)
+    if item is not None:
+        st.session_state["selected_candidate"] = identifier
+        st.session_state["view_certification"] = item.application.certification
+
+
+def on_candidate_change() -> None:
+    select_candidate(st.session_state["selected_candidate"])
+
+
+def move_step(offset: int | None = None) -> None:
+    """Callbacks run before rendering, so the stepper cannot lag one rerun."""
+    index = STEPS.index(st.session_state["search_step"])
+    st.session_state["search_step"] = STEPS[0 if offset is None else max(0, min(len(STEPS) - 1, index + offset))]
+
+
+def candidate_table(original: Application, candidates: tuple[Candidate, ...]) -> pd.DataFrame:
+    """Numeric distances remain sortable; validity and feasibility stay distinct."""
     return pd.DataFrame([
-        {
-            "Candidate ID": item.candidate_id,
-            "Income": item.application.income,
-            "Experience": item.application.experience,
-            "Certification": item.application.certification,
-            "Prediction": "Accepted" if item.valid else "Rejected",
-            "Distance": item.distance,
-            "Sparsity": item.sparsity,
-            "Changed Features": "; ".join(item.changes),
-            "Feasibility": "Feasible" if item.feasibility.feasible else "Infeasible",
-            "Constraint Details": "; ".join(item.feasibility.violations) or "All assumed limits satisfied",
-            "Objective": item.objective,
-        }
+        {"Candidate": item.candidate_id, "Changes": short_changes(original, item),
+         "Distance": item.distance, "Valid": item.valid, "Feasible": item.feasibility.feasible}
         for item in candidates
-    ])
+    ], columns=["Candidate", "Changes", "Distance", "Valid", "Feasible"])
 
 
-def mathematical_explanation(normalization: dict[str, float], lambda_value: float) -> None:
-    with st.expander("Mathematics, assumptions & algorithm"):
-        st.markdown("**Classifier** — two of three conditions must pass. Birth year is never used.")
-        st.latex(r"f(I,E,C)=\mathbf{1}\left[\mathbf{1}[I\geq25]+\mathbf{1}[E\geq3]+\mathbf{1}[C=1]\geq2\right]")
-        st.markdown("**Educational penalty objective**")
-        st.latex(r"L(x')=\lambda\,\mathbf{1}[f(x')\ne1]+d(x,x')")
-        st.latex(r"d(x,x')=\frac{|I-I'|}{s_I}+\frac{|E-E'|}{s_E}+\frac{|C-C'|}{s_C}")
-        st.write(f"Current scales: income = {normalization['income']:g}, "
-                 f"experience = {normalization['experience']:g}, certification = {normalization['certification']:g}. "
-                 f"λ = {lambda_value:g}.")
-        st.markdown(
-            "The scales are **manually chosen educational factors**, not training-data MAD values. "
-            "Lambda and L are diagnostics. A finite λ, including 10, does **not** always make an "
-            "accepted point preferable under L: the unchanged rejected point has L = λ. "
-            "Our recommendation instead **requires acceptance first**, then minimizes distance "
-            "subject to domains, immutability, and the enabled practical limits. "
-            "Consequently L = distance for every generated, accepted candidate."
+def search_process(trace: SearchTrace, enabled: bool) -> None:
+    """Reveal actual evaluated points, including unsuccessful combinations."""
+    accepted = bool(predict(trace.original))
+    stage = st.radio("Search stage", STEPS, key="search_step", horizontal=True,
+                     label_visibility="collapsed", disabled=accepted)
+    index = STEPS.index(stage)
+    previous, following, reset, _ = st.columns([1, 1, 1, 3])
+    previous.button("Previous Step", key="previous_step", on_click=move_step, args=(-1,),
+                    disabled=accepted or index == 0, width="stretch")
+    following.button("Next Step", key="next_step", on_click=move_step, args=(1,),
+                     disabled=accepted or index == len(STEPS) - 1, width="stretch")
+    reset.button("Reset", key="reset_search", on_click=move_step, disabled=accepted, width="stretch")
+    if accepted:
+        st.info("Already Accepted · Search skipped · No recourse needed.")
+        return
+    if stage == "Original":
+        st.markdown(f"**Original {point_label(trace.original)} → Rejected**")
+        st.caption("Target: Accepted · Threshold-aware enumeration.")
+    elif stage == "Thresholds":
+        st.dataframe(pd.DataFrame([
+            {"Feature": name.title(), "Original": getattr(trace.original, name),
+             "Values enumerated": ", ".join(f"{value:g}" for value in values),
+             "Condition passes": condition_results(trace.original)[name]}
+            for name, values in trace.options.items()
+        ]), hide_index=True, width="stretch")
+        st.caption("Keep original values; add missing exact thresholds. No grid.")
+    elif stage == "Candidates":
+        nodes = "".join(
+            f'<div class="cfx-node"><b>{item.candidate_id}</b>{point_label(item.application)}'
+            f'<br><small>{"Unchanged baseline" if item.application == trace.original else "Threshold combination"}</small></div>'
+            for item in trace.evaluated
         )
-        st.latex(r"\min_{x'} d(x,x')\quad\text{subject to }f(x')=1,\;x'\in\mathcal{D},\;x'\in\mathcal{F}\text{ when enabled}")
-        st.markdown(
-            "**Feasibility:** relative to the current original, income increase must not exceed "
-            "its limit; experience cannot decrease and its increase must not exceed its limit; "
-            "obtaining certification requires permission. Certification remains binary and "
-            "birth year always stays unchanged. These are assumed three-month limits."
-        )
-        st.code(
-            "if predict(original) == Accepted:\n"
-            "    return []  # no recourse needed\n"
-            "for each predictive feature:\n"
-            "    values = {original value}\n"
-            "    if its condition is not satisfied:\n"
-            "        add the exact minimum satisfying value\n"
-            "for point in product(income_values, experience_values, cert_values):\n"
-            "    preserve immutable context and validate domains\n"
-            "    skip unchanged or rejected points\n"
-            "    compute distance, sparsity, objective, changes, feasibility\n"
-            "sort valid candidates by distance (then sparsity and stable tie-breaks)\n"
-            "eligible = valid candidates satisfying mandatory constraints\n"
-            "if practical constraints enabled: keep only feasible candidates\n"
-            "return nearest eligible candidate, or an explicit no-solution result",
-            language="text",
-        )
-        st.markdown(
-            "**Why this search is exact here:** acceptance depends only on three monotonic threshold "
-            "conditions. From any accepted point, undo changes unnecessary for its passing conditions "
-            "and reduce remaining increases to their thresholds. Acceptance is preserved and positive "
-            "weighted Manhattan distance cannot increase. Reducing increases also preserves these "
-            "upper-bound feasibility limits. Thus one of the at most eight threshold combinations "
-            "is optimal. This is a model-specific argument, not a guarantee for arbitrary black boxes. "
-            "The search enumerates threshold combinations, not a fixed-step continuous grid."
-        )
-        st.caption("Inspired by Wachter et al.'s optimization formulation; not their Adam-based experimental implementation.")
+        st.html(f'<div class="cfx-nodes">{nodes}</div>')
+        st.caption(f"{len(trace.evaluated)} product combinations · Includes unchanged original.")
+    elif stage == "Evaluation":
+        st.dataframe(pd.DataFrame([
+            {"Point": item.candidate_id, "(I, E, C)": point_label(item.application),
+             "Distance": item.distance, "Valid": item.valid, "L": item.objective,
+             "Retained": item.valid and item.application != trace.original}
+            for item in trace.evaluated
+        ]), hide_index=True, width="stretch", column_config={
+            "Distance": st.column_config.NumberColumn(format="%.4f"),
+            "L": st.column_config.NumberColumn(format="%.4f"),
+        })
+        st.caption(f"{len(trace.evaluated)} evaluated → {len(trace.candidates)} accepted changes. Original/rejected points excluded.")
+    elif stage == "Feasibility":
+        frame = candidate_table(trace.original, trace.candidates)
+        frame["Eligible"] = [item.feasibility.feasible if enabled else True for item in trace.candidates]
+        st.dataframe(frame, hide_index=True, width="stretch")
+        st.caption("Constraints ON: retain feasible points." if enabled else
+                   "Constraints OFF: all target-valid changes remain eligible.")
+    else:
+        item = st.session_state["recommendation"]
+        if item is None:
+            st.warning("No feasible counterfactual under the configured limits.")
+        else:
+            st.success(f"Selected: {item.candidate_id} {point_label(item.application)} · Distance {item.distance:.2f}")
+        st.caption(f"Accepted + {'feasibility' if enabled else 'mandatory limits'} first; then minimize distance.")
+
+
+def candidates_panel(trace: SearchTrace, selected: Candidate | None) -> None:
+    """Compact selectable comparison plus metric sensitivity, with details on demand."""
+    if not trace.candidates:
+        st.info("Original already Accepted. No generated explanations are needed.")
+        return
+    feasible_only = st.checkbox("Feasible only", key="feasible_only")
+    visible = tuple(item for item in trace.candidates if not feasible_only or item.feasibility.feasible)
+    table_key = f"candidate_table_{st.session_state['revision']}_{feasible_only}"
+
+    def on_row_select() -> None:
+        rows = st.session_state[table_key]["selection"]["rows"]
+        if rows:
+            select_candidate(visible[rows[0]].candidate_id)
+
+    table_column, chart_column = st.columns([3, 2])
+    with table_column:
+        if visible:
+            st.dataframe(candidate_table(trace.original, visible), key=table_key, hide_index=True,
+                         width="stretch", on_select=on_row_select, selection_mode="single-row",
+                         column_config={"Distance": st.column_config.NumberColumn(format="%.4f")})
+            st.caption("Select a row to highlight its point. Click Distance to sort.")
+        else:
+            st.info("No feasible candidates match this filter.")
+    with chart_column:
+        st.plotly_chart(candidate_distance_figure(trace.candidates, selected), width="stretch",
+                        key="distances", config={"displaylogo": False})
+    st.caption("Distance scales: Settings → Additional Settings.")
+    if selected:
+        with st.expander(f"Candidate Details · {selected.candidate_id}", expanded=False):
+            st.write(f"**{point_label(selected.application)}** · Valid: {selected.valid} · "
+                     f"Feasible: {selected.feasibility.feasible} · Sparsity: {selected.sparsity} · L: {selected.objective:.6g}")
+            st.write("; ".join(selected.changes))
+            normalization = dict(st.session_state["problem_signature"][2])
+            terms = [f"|{getattr(trace.original, name):g} − {getattr(selected.application, name):g}| / {normalization[name]:g}"
+                     for name in FEATURES]
+            st.code("d = " + " + ".join(terms) + f" = {selected.distance:.6g}", language="text")
+            for violation in selected.feasibility.violations:
+                st.caption(violation)
 
 
 def main() -> None:
-    st.set_page_config(page_title="Counterfactual Explorer", page_icon="🔎", layout="wide")
-    st.title("Counterfactual Explorer")
-    st.markdown("**Understanding how small changes in input features can change AI predictions.**")
-    st.caption("A synthetic screening model accepts an application when at least two of three threshold conditions pass. No training or external API is used.")
-
-    st.subheader("1 · Original application")
-    income_col, experience_col, cert_col = st.columns(3)
-    with income_col:
-        income = st.number_input("Monthly income (million VND/month)", min_value=0.0,
-                                 value=24.0, step=0.1, format="%.4f", key="income")
-    with experience_col:
-        experience = st.number_input("Years of experience", min_value=0.0,
-                                     value=2.0, step=0.05, format="%.4f", key="experience")
-    with cert_col:
-        certification = st.selectbox("Professional certification", options=[0, 1],
-                                      format_func=lambda value: "Yes (1)" if value else "No (0)", key="certification")
-    birth_year = None
-    with st.expander("Optional immutable context"):
-        if st.checkbox("Include birth year", key="include_birth_year"):
-            birth_year = st.number_input("Birth year (not used in prediction)", min_value=1,
-                                         value=2000, step=1, key="birth_year")
-            st.caption("Editable for the original application; unchanged in every counterfactual.")
-    try:
-        original = Application(income, experience, certification, birth_year)
-    except ValueError as error:
-        st.error(str(error))
-        st.stop()
-    conditions = condition_results(original)
-    prediction = predict(original)
-    st.metric("Prediction", "ACCEPTED" if prediction else "REJECTED",
-              f"Conditions satisfied: {sum(conditions.values())} / 3", delta_color="off")
-    labels = {"income": "Income ≥ 25", "experience": "Experience ≥ 3", "certification": "Certification = 1"}
-    for column, (feature, passed) in zip(st.columns(3), conditions.items()):
-        with column:
-            st.markdown(f"{'✅' if passed else '❌'} **{labels[feature]}** — {'Passed' if passed else 'Not satisfied'}")
-
-    st.subheader("2 · Constraint explorer")
-    enabled = st.toggle("Enable Real-world Constraints", value=True, key="constraints_enabled")
-    st.caption("Time horizon: 3 months · Synthetic assumptions, not verified promises about employment outcomes.")
-    limit_income, limit_experience, limit_certification = st.columns(3)
-    with limit_income:
-        max_income = st.number_input("Maximum income increase (million VND/month)",
-                                     min_value=0.0, value=5.0, step=0.5, key="max_income")
-    with limit_experience:
-        max_experience = st.number_input("Maximum experience increase (years)",
-                                         min_value=0.0, value=0.25, step=0.05, key="max_experience")
-    with limit_certification:
-        can_certify = st.checkbox("Certification can be obtained", value=True, key="can_certify")
-    with st.expander("Advanced settings · distance scales & lambda"):
-        st.caption("All scales must be finite and strictly positive. These are manual scales, not MAD estimates. Input step sizes are editing conveniences; search does not use a grid.")
-        scale_columns = st.columns(3)
-        normalization = {}
-        for column, name, default in zip(scale_columns, ("income", "experience", "certification"), (10.0, 5.0, 1.0)):
-            with column:
-                normalization[name] = st.number_input(f"{name.title()} normalization", min_value=0.0,
-                                                      value=default, step=0.1, format="%.6f", key=f"scale_{name}")
-        lambda_value = st.number_input("Lambda (diagnostic only)", min_value=0.0,
-                                       value=10.0, step=1.0, key="lambda_value")
-
-    try:
-        constraints = Constraints(max_income, max_experience, can_certify)
-        candidates = generate_counterfactuals(original, normalization=normalization,
-                                               lambda_value=lambda_value, constraints=constraints)
-    except ValueError as error:
-        st.error(str(error))
-        st.stop()
-
-    st.subheader("3 · Counterfactuals & recommendation")
-    if st.button("Generate Counterfactuals", type="primary", key="generate"):
-        st.session_state["generated"] = True
-    generated = st.session_state.get("generated", False)
-    closest = select_recommendation(candidates, enforce_feasibility=False)
-    feasible = select_recommendation(candidates, enforce_feasibility=True)
-    recommended = feasible if enabled else closest
-    if prediction:
-        st.success("The original application is already Accepted. No recourse is necessary for target = 1.")
-        displayed = []
-        recommended = None
-    elif not generated:
-        st.info("Click Generate Counterfactuals, then toggle constraints to compare the recommendations. Results will stay live as you edit inputs and settings.")
-        displayed = []
-        recommended = None
-    else:
-        displayed = candidates
-        col_closest, col_feasible = st.columns(2)
-        with col_closest:
-            recommendation_card("Closest valid counterfactual", closest)
-        with col_feasible:
-            recommendation_card("Closest feasible counterfactual", feasible)
-        if recommended is None:
-            st.error("No feasible counterfactual exists under the current constraints. No infeasible solution is recommended.")
-            st.write("At least two conditions must pass, but no accepted threshold combination satisfies all current limits. Review the violations in the table or relax a practical limit.")
+    st.set_page_config(page_title="Counterfactual Explorer", page_icon="🔍", layout="wide",
+                       initial_sidebar_state="collapsed")
+    st.html(CSS)
+    with st.container(gap="xsmall"):
+        heading, configuration = st.columns([5, 1], vertical_alignment="center")
+        with heading:
+            st.html('<h1 class="cfx-title">Counterfactual Explorer <small>V2 · XAI seminar</small></h1>')
+        with configuration:
+            try:
+                constraints, normalization, lambda_value, birth_year = settings()
+            except ValueError as error:
+                st.error(str(error))
+                st.stop()
+        income_col, experience_col, cert_col, button_col, constraint_col = st.columns(
+            [1.4, 1.4, 1, 1, 1.2], vertical_alignment="bottom",
+        )
+        income = income_col.number_input("Income (M VND)", min_value=0.0, value=24.0,
+                                         step=.1, format="%g", key="income",
+                                         help="Million VND/month. Condition: income ≥ 25.")
+        experience = experience_col.number_input("Experience (years)", min_value=0.0,
+                                                 value=2.0, step=.05, format="%g", key="experience",
+                                                 help="Continuous years. Condition: experience ≥ 3.")
+        certification = cert_col.selectbox("Certified", [0, 1], key="certification",
+                                            format_func=lambda value: "Yes" if value else "No")
+        recalculate = button_col.button("Generate", type="primary", key="generate", width="stretch",
+                                        help="Recalculate and restart the search trace. Results also update automatically.")
+        enabled = constraint_col.toggle("Constraints", value=True, key="constraints_enabled",
+                                         help="Choose the active recommendation. Both comparison cards keep their own constraints.")
+        try:
+            original = Application(income, experience, certification, birth_year)
+            trace = synchronize(original, constraints, normalization, lambda_value, enabled, recalculate)
+        except ValueError as error:
+            st.error(str(error))
+            st.stop()
+        conditions = condition_results(original)
+        accepted = bool(predict(original))
+        badges = " &nbsp; ".join(
+            f'<span title="{explanation}">{name} {"✓" if conditions[feature] else "✕"}</span>'
+            for feature, name, explanation in (
+                ("income", "Income", "Income ≥ 25 million VND/month"),
+                ("experience", "Experience", "Experience ≥ 3 years"),
+                ("certification", "Certification", "Certification = 1"),
+            )
+        )
+        st.html(f'<div class="cfx-status" role="status"><span>Current prediction: '
+                f'<b class="{"pass" if accepted else "fail"}">{"ACCEPTED" if accepted else "REJECTED"}</b></span>'
+                f'<span>{sum(conditions.values())} / 3 conditions</span><span>{badges}</span></div>')
+        closest = select_recommendation(trace.candidates, enforce_feasibility=False)
+        feasible = select_recommendation(trace.candidates, enforce_feasibility=True)
+        left, right = st.columns(2)
+        with left:
+            recommendation_card("Closest CF", original, closest, active=not enabled, accepted=accepted)
+        with right:
+            recommendation_card("Closest Feasible CF", original, feasible, active=enabled, accepted=accepted)
+        if accepted:
+            st.caption("Original already Accepted. No recourse is necessary for target = 1.")
+        elif closest and not closest.feasibility.feasible:
+            st.caption(exclusion_summary(original, closest, constraints))
         else:
-            st.success(f"Recommended: {point_label(recommended.application)} · {recommended.candidate_id} · Distance: {recommended.distance:.2f}")
-            st.write("**Required changes:** " + "; ".join(recommended.changes))
-            if original.birth_year is not None:
-                st.caption(f"Birth year: {original.birth_year} → {recommended.application.birth_year} (immutable; excluded from prediction and distance).")
-        if closest is not None and not closest.feasibility.feasible:
-            st.warning(f"The closest valid option, {closest.candidate_id}, violates the assumed practical limits: "
-                       + " ".join(closest.feasibility.violations))
-            if feasible is not None:
-                st.write(f"With constraints OFF: **{point_label(closest.application)}**, distance **{closest.distance:.2f}**. "
-                         f"With constraints ON: **{point_label(feasible.application)}**, distance **{feasible.distance:.2f}**. "
-                         "The feasible option costs more in this distance metric, but satisfies the assumed limits.")
-        elif closest is not None:
-            st.info("The closest valid option is also feasible, so the constraint toggle does not change this recommendation.")
-        if not enabled:
-            st.caption("Practical limits are ignored for recommendation. The table still assesses feasibility using the limits above. Feature domains and immutable context remain enforced.")
+            st.caption("Closest and closest feasible coincide under the current limits.")
 
-        frame = candidate_table(candidates)
-
-        def highlight(row):
-            is_recommended = recommended is not None and row["Candidate ID"] == recommended.candidate_id
-            return ["background-color: #D4F0E1; color: #162338; font-weight: 600" if is_recommended else ""] * len(row)
-
-        st.dataframe(frame.style.apply(highlight, axis=1), hide_index=True, width="stretch",
-                     column_config={"Distance": st.column_config.NumberColumn(format="%.4f"),
-                                    "Objective": st.column_config.NumberColumn(format="%.4f")})
-        st.caption("Click column headers to sort. Green row = current recommendation. Candidate IDs are assigned by the current distance ranking. Validity means Accepted; feasibility means satisfying the assumed limits.")
-        with st.expander("Inspect each candidate · changes, distances & feasibility"):
-            for item in candidates:
-                st.markdown(f"**{item.candidate_id} — {point_label(item.application)}**")
-                st.write("; ".join(item.changes))
-                terms = [f"|{getattr(original, name):g} − {getattr(item.application, name):g}| / {normalization[name]:g}"
-                         for name in normalization]
-                parts = " + ".join(f"{item.contributions[name]:.6g}" for name in normalization)
-                st.code("d = " + " + ".join(terms) + f" = {parts} = {item.distance:.6g}", language="text")
-                st.write(f"Validity: {item.valid} · Sparsity: {item.sparsity} · "
-                         f"Feasible: {item.feasibility.feasible} · L = {item.objective:.6g}")
-                for violation in item.feasibility.violations:
-                    st.caption(violation)
-
-    st.subheader("4 · Decision regions")
-    for column, cert in zip(st.columns(2), (0, 1)):
-        with column:
-            st.plotly_chart(decision_region_figure(original, displayed, cert, recommended),
-                            width="stretch", key=f"decision_{cert}", config={"displaylogo": False})
-    st.caption("Dotted lines are inclusive thresholds at income 25 and experience 3. Each point appears only in its own certification view. Blue circles: feasible; orange crosses: infeasible; purple ring: recommended. Hover or zoom for detail.")
-    mathematical_explanation(normalization, lambda_value)
-    with st.expander("Why acceptance alone is not enough"):
-        example_application = Application(max(500.0, income), max(3.0, experience),
-                                          certification, original.birth_year)
-        example = evaluate_candidate(original, example_application, normalization=normalization,
-                                      lambda_value=lambda_value, constraints=constraints)
-        st.write(f"An intentionally excessive income example: **{point_label(example.application)}**. "
-                 f"Prediction: Accepted · Distance: **{example.distance:.2f}** · "
-                 f"Feasible under current limits: **{example.feasibility.feasible}**.")
-        st.caption("Computed from current inputs and settings; shown separately from the optimal search. At default inputs its distance is 47.80.")
-        st.write("A prediction flip alone says little about proximity or actionability.")
-    st.info("**The nearest counterfactual is not necessarily the nearest feasible counterfactual.**")
-    st.markdown("### Limitations & attribution")
-    st.markdown(
-        "- The classifier is synthetic; income as a hiring feature can introduce unfair bias.\n"
-        "- Prediction changes do not establish causality or guarantee real-world outcomes.\n"
-        "- Feasibility uses assumed three-month limits; it does not capture all personal costs or opportunities.\n"
-        "- Threshold enumeration is specific to this model, not a general black-box search method.\n"
-        "- This is not a reproduction of Wachter et al.'s Adam optimization experiments.\n\n"
-        "Wachter, S., Mittelstadt, B., & Russell, C. (2018). *Counterfactual Explanations without "
-        "Opening the Black Box: Automated Decisions and the GDPR.* [Paper](https://arxiv.org/abs/1711.00399). "
-        "Their optimization formulation and MAD-weighted distance approach motivate the lesson; "
-        "our classifier, manual scales, enumeration, and feasibility assumptions are educational choices."
-    )
+        decision_tab, search_tab, candidates_tab = st.tabs(
+            ["Decision Boundary", "Search Process", "Candidates"], key="dashboard_tabs",
+        )
+        selected = next((item for item in trace.candidates
+                         if item.candidate_id == st.session_state["selected_candidate"]), None)
+        with decision_tab:
+            slice_column, select_column = st.columns([1, 2], vertical_alignment="bottom")
+            with slice_column:
+                slice_value = st.radio("Certification slice", [0, 1], horizontal=True,
+                                       key="view_certification", help="C=0: income AND experience. C=1: income OR experience.")
+            with select_column:
+                st.selectbox("Highlight candidate", [item.candidate_id for item in trace.candidates] or ["None"],
+                              key="selected_candidate", on_change=on_candidate_change,
+                              disabled=not trace.candidates,
+                              format_func=lambda identifier: next(
+                                  (f"{identifier} · {point_label(item.application)} · d {item.distance:.2f}"
+                                   for item in trace.candidates if item.candidate_id == identifier), "No recourse needed"))
+            st.plotly_chart(decision_region_figure(
+                original, trace.candidates, slice_value, st.session_state["recommendation"],
+                selected=selected, closest=closest, feasible=feasible,
+            ), width="stretch", key="decision", config={"displaylogo": False})
+            if selected and selected.application.certification != slice_value:
+                st.caption(f"{selected.candidate_id} belongs to certification {selected.application.certification}; switch slices to see it.")
+        with search_tab:
+            search_process(trace, enabled)
+        with candidates_tab:
+            candidates_panel(trace, selected)
+        render_details(original, normalization, lambda_value, constraints)
 
 
 if __name__ == "__main__":
