@@ -9,6 +9,7 @@ from core.model import Application, condition_results, predict
 from core.scenarios import ScenarioResult
 from core.sensitivity import ranking_insight, threshold_costs
 from visualization import candidate_distance_figure
+from ui_theme import COLORS
 
 
 def point_label(application: Application) -> str:
@@ -101,7 +102,8 @@ def scenario_view(results: dict[str, ScenarioResult], selected_name: str, normal
     # This four-row summary is presentation-only. Text avoids Streamlit's
     # numeric-null placeholder "None"; core results retain float | None values.
     styled = frame.style.apply(
-        lambda row: ["background-color: #F2EAFA; color: #162338" if row["Scenario"] == selected_name else ""] * len(row),
+        lambda row: [f"background-color: {COLORS['selection_surface']}; color: {COLORS['ink']}"
+                     if row["Scenario"] == selected_name else ""] * len(row),
         axis=1,
     )
     st.dataframe(styled, hide_index=True, width="stretch", key="scenario_comparison",

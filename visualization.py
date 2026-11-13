@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 
 from core.generator import Candidate
 from core.model import Application, EXPERIENCE_THRESHOLD, INCOME_THRESHOLD, predict
+from ui_theme import COLORS, SANS, SERIF, plotly_presentation
 
 
 def decision_region_figure(
@@ -38,22 +39,22 @@ def decision_region_figure(
             line={"width": 0}, name=name, hoverinfo="skip", showlegend=showlegend,
         ))
 
-    region(0, 0, xmax, ymax, "Rejected region", "#FCE6E6")
+    region(0, 0, xmax, ymax, "Rejected region", COLORS["rejected_region"])
     if certification == 0:
         region(INCOME_THRESHOLD, EXPERIENCE_THRESHOLD, xmax, ymax,
-               "Accepted region", "#D4F0E1")
+               "Accepted region", COLORS["accepted_region"])
     else:
-        region(INCOME_THRESHOLD, 0, xmax, ymax, "Accepted region", "#D4F0E1")
+        region(INCOME_THRESHOLD, 0, xmax, ymax, "Accepted region", COLORS["accepted_region"])
         region(0, EXPERIENCE_THRESHOLD, INCOME_THRESHOLD, ymax,
-               "Accepted region", "#D4F0E1", False)
-    figure.add_vline(x=INCOME_THRESHOLD, line_dash="dot", line_color="#657387")
-    figure.add_hline(y=EXPERIENCE_THRESHOLD, line_dash="dot", line_color="#657387")
+               "Accepted region", COLORS["accepted_region"], False)
+    figure.add_vline(x=INCOME_THRESHOLD, line_dash="dot", line_color=COLORS["boundary"])
+    figure.add_hline(y=EXPERIENCE_THRESHOLD, line_dash="dot", line_color=COLORS["boundary"])
 
     if original.certification == certification:
         figure.add_trace(go.Scatter(
             x=[original.income], y=[original.experience], mode="markers+text",
             text=["Original"], textposition="bottom left", name="Original",
-            marker={"size": 17, "symbol": "star", "color": "#162338"},
+            marker={"size": 17, "symbol": "star", "color": COLORS["ink"]},
             customdata=[[certification, "Accepted" if predict(original) else "Rejected"]],
             hovertemplate="Original<br>Income: %{x:g}<br>Experience: %{y:g}"
                           "<br>Certification: %{customdata[0]}<br>%{customdata[1]}<extra></extra>",
@@ -74,7 +75,7 @@ def decision_region_figure(
             hovertext=[f"Feasible: {'Yes' if item.feasibility.feasible else 'No'}"
                        f"<br>Sparsity: {item.sparsity}" for item in visible],
             marker={"size": 13, "symbol": "circle" if is_feasible else "x",
-                    "color": "#155EAD" if is_feasible else "#AD5700"},
+                    "color": COLORS["feasible"] if is_feasible else COLORS["infeasible"]},
             hovertemplate="%{customdata[0]}<br>Income: %{x:g}<br>Experience: %{y:g}"
                           "<br>Certification: %{customdata[1]}<br>Distance: %{customdata[2]:.4f}"
                           "<br>%{hovertext}"
@@ -82,10 +83,10 @@ def decision_region_figure(
             cliponaxis=False,
         ))
     for candidate, name, symbol, color, size in (
-        (closest, "Closest CF", "diamond-open", "#162338", 22),
-        (feasible, "Closest feasible", "square-open", "#126344", 22),
-        (recommendation, "Recommended", "circle-open", "#6E37A8", 28),
-        (selected, "Selected", "circle-open", "#6E37A8", 34),
+        (closest, "Closest CF", "diamond-open", COLORS["ink"], 22),
+        (feasible, "Closest feasible", "square-open", COLORS["accepted"], 22),
+        (recommendation, "Recommended", "circle-open", COLORS["accent"], 28),
+        (selected, "Selected", "circle-open", COLORS["accent"], 34),
     ):
         if candidate is None or candidate.application.certification != certification:
             continue
@@ -100,12 +101,17 @@ def decision_region_figure(
             hoverinfo="skip", cliponaxis=False,
         ))
     figure.update_layout(
-        template="plotly_white", height=350,
-        font={"size": 14, "color": "#162338"},
-        margin={"l": 15, "r": 20, "t": 10, "b": 30},
-        xaxis={"title": "Income (M VND/month)", "range": [0, xmax], "showgrid": False},
-        yaxis={"title": "Experience (years)", "range": [0, ymax], "showgrid": False},
-        legend={"orientation": "h", "y": -0.25, "font": {"size": 11}},
+        template="plotly_white", height=380,
+        margin={"l": 20, "r": 25, "t": 12, "b": 35},
+        xaxis={"title": {"text": "Income (M VND/month)", "font": {"family": SANS, "size": 14, "color": COLORS["ink"]}},
+               "range": [0, xmax], "showgrid": False,
+               "showline": True, "linecolor": COLORS["border"], "tickfont": {"size": 13, "color": COLORS["muted"]}},
+        yaxis={"title": {"text": "Experience (years)", "font": {"family": SANS, "size": 14, "color": COLORS["ink"]}},
+               "range": [0, ymax], "showgrid": False,
+               "showline": True, "linecolor": COLORS["border"], "tickfont": {"size": 13, "color": COLORS["muted"]}},
+        legend={"orientation": "h", "y": -0.25, "font": {"family": SANS, "size": 12, "color": COLORS["muted"]},
+                "bgcolor": "rgba(0,0,0,0)"},
+        **plotly_presentation(),
     )
     return figure
 
@@ -123,18 +129,22 @@ def candidate_distance_figure(
             "Yes" if item.feasibility.feasible else "No",
         ] for item in candidates],
         marker={
-            "color": ["#155EAD" if item.feasibility.feasible else "#AD5700" for item in candidates],
+            "color": [COLORS["feasible"] if item.feasibility.feasible else COLORS["infeasible"] for item in candidates],
             "pattern": {"shape": ["" if item.feasibility.feasible else "/" for item in candidates]},
-            "line": {"width": [3 if item == selected else 0 for item in candidates], "color": "#6E37A8"},
+            "line": {"width": [3 if item == selected else 0 for item in candidates], "color": COLORS["accent"]},
         },
         hovertemplate="%{y}<br>(%{customdata[0]:g}, %{customdata[1]:g}, %{customdata[2]})"
                       "<br>Distance: %{x:.6g}<br>Feasible: %{customdata[3]}<extra></extra>",
     ))
     figure.update_layout(
-        title={"text": "Distance sensitivity", "font": {"size": 14}},
+        title={"text": "Distance sensitivity", "font": {"family": SERIF, "size": 18, "color": COLORS["ink"]}},
         template="plotly_white", height=230, showlegend=False,
         margin={"l": 5, "r": 35, "t": 35, "b": 15},
-        xaxis={"title": "Normalized distance", "range": [0, max((item.distance for item in candidates), default=1) * 1.18]},
-        yaxis={"autorange": "reversed"}, font={"size": 12},
+        xaxis={"title": {"text": "Normalized distance", "font": {"family": SANS, "size": 13, "color": COLORS["ink"]}},
+               "range": [0, max((item.distance for item in candidates), default=1) * 1.18],
+               "gridcolor": COLORS["border"], "zerolinecolor": COLORS["border"],
+               "tickfont": {"size": 12, "color": COLORS["muted"]}},
+        yaxis={"autorange": "reversed", "tickfont": {"size": 12, "color": COLORS["muted"]}},
+        **plotly_presentation(),
     )
     return figure

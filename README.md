@@ -1,4 +1,4 @@
-# Counterfactual Explorer · V3
+# Counterfactual Explorer
 
 **The nearest counterfactual is not necessarily the nearest feasible counterfactual.**
 
@@ -8,111 +8,6 @@ AI-CounterFactualX, this project uses a tiny synthetic application-screening mod
 so the prediction, counterfactual search, and feasibility assumptions can all be
 explained in two minutes. No training, database, backend service, or API key is needed.
 After installation, the demo works offline; the paper hyperlink is optional reading.
-
-## V3: Basic and Advanced
-
-**Results first; details on demand.** V3 preserves the V2 dashboard, classifier,
-distance formula, threshold enumeration, and validated default results. It adds
-metric sensitivity and scenario experiments without stacking more main sections.
-
-The compact **Basic / Advanced** switch changes only the available tabs:
-
-- **Basic (default):** Decision Boundary, Search Process, Candidates.
-- **Advanced:** Sensitivity Analysis, Scenario Comparison.
-
-Both modes share the input row, prediction, and optimal-CF cards. Switching modes
-does not reset input, normalization, custom limits, inspection selection, or search
-step. Advanced displays the three normalization controls inline; Basic retains V2's
-collapsed settings access. No additional application dependencies are needed.
-
-- One input row with income, experience, certification, Generate, and Constraints.
-- Compact prediction/condition badges and side-by-side **Closest CF** and
-  **Closest Feasible CF** cards, populated immediately at startup.
-- **Settings ⚙** popover for practical limits; collapsed **Additional Settings**
-  for manual normalization scales, lambda, and optional immutable context.
-- **Decision Boundary:** interactive certification selector, hover details,
-  selected-candidate highlighting, and separate markers for both optima.
-- **Search Process:** Original → Thresholds → Candidates → Evaluation →
-  Feasibility → Result, with Previous Step, Next Step, and Reset controls.
-  The actual default enumeration includes **all eight combinations**: four
-  rejected points (including the original) and four accepted changes.
-- **Candidates:** sortable, selectable compact table; feasible-only filter;
-  horizontal distance-sensitivity bars; collapsed exact calculations.
-- Mathematical Details, Search Algorithm, and Assumptions & Limitations are
-  collapsed by default. Cards stack on narrow screens; custom CSS is scoped
-  to the dashboard's own elements rather than Streamlit internals.
-
-Both cards **always** solve their labeled problems. The main Constraints switch
-selects which result is active; it never changes the meaning of either card. The
-right card labels its practical profile: **3 Months**, **No Certificate**, or
-**Custom**. Selecting **No Constraints** activates the left card while retaining
-the right card as an explicitly labeled practical comparison. With no feasible
-solution the right card reports that even when constraints are OFF.
-
-Selecting a table row or candidate dropdown highlights the same application and
-navigates to its certification slice. Switching slices manually never places the
-selected point on an incompatible slice. Changing original inputs, constraints,
-scales, or lambda refreshes the real trace and resets the search step/selection;
-changing the active constraint policy resets the presentation state as well.
-Tab navigation retains inputs. Generate explicitly recalculates and restarts the
-trace; it is not required to reveal initial results. Manual stepping is supported;
-there is no simulated autoplay or optimization animation.
-
-### Sensitivity Analysis
-
-Smaller normalization scales make changes to that feature more expensive. This
-changes **distance**, not prediction thresholds or feasibility assumptions.
-The horizontal chart sorts by current distance, marks the unconstrained optimum,
-and distinguishes practical feasibility by both color and hatching. A compact
-table compares default/current distances and feasible rankings under the profile
-shown on the right card.
-
-For original `(24, 2, 0)`, changing only experience normalization from **5** to **0.5**:
-
-| Stable dashboard ID | Application | Default distance | Modified distance |
-|---|---|---:|---:|
-| CF1 | `(25, 3, 0)` | 0.30 | 2.10 |
-| CF2 | `(25, 2, 1)` | 1.10 | 1.10 |
-| CF3 | `(24, 3, 1)` | 1.20 | 3.00 |
-| CF4 | `(25, 3, 1)` | 1.30 | 3.10 |
-
-The dashboard reports **“Optimal CF changed: CF1 → CF2”**. All predictions remain
-unchanged. Tied optima use deterministic sparsity/feature-value tie-breaking;
-the insight explicitly identifies a tie instead of implying a strictly better point.
-
-### Scenario Comparison
-
-All rows are calculated from the same current input and metric:
-
-| Scenario | Practical constraints | Default result |
-|---|---|---|
-| No Constraints | None; domains and immutable context still mandatory | `(25, 3, 0)`, d = 0.30 |
-| 3 Months | Income +5, experience +0.25, certification allowed | `(25, 2, 1)`, d = 1.10 |
-| No Certificate | Same horizon, obtaining certification disallowed | No feasible CF |
-| Custom | User-configured limits in Settings ⚙ | Computed dynamically |
-
-Income and experience cannot decrease in practical scenarios. Editing a limit
-selects **Custom**; switching to a preset never overwrites the saved Custom
-configuration. The scenario selector and Basic's Constraints toggle are synchronized.
-
-For the default **No Certificate** scenario, only income can reach a new passing
-condition; experience cannot reach 3 within +0.25 years and certification cannot
-be obtained. Income alone is insufficient. The no-solution message is scoped to
-that scenario, not to all possible horizons or constraints. Missing distances
-are displayed as a dash, not infinity or a fabricated recommendation.
-
-### Optimality explanation and reset
-
-**Why this counterfactual?** is collapsed and computed on demand. It shows current
-threshold changes/costs, reachable conditions, eligible combinations, exclusions,
-and the minimum eligible distance. It handles changed inputs, scales, permissions,
-already-accepted inputs, and no-solution cases. In Basic it is nested in Mathematical
-Details; Advanced provides it within each analytical tab.
-
-**Settings → Reset to Defaults** restores the full worked example: `(24, 2, 0)`,
-scales `(10, 5, 1)`, lambda 10, default three-month limits, Basic mode, and original
-search/selection state. No ineffective time-horizon slider is included: limits
-are explicit assumptions rather than derived from an unused time control.
 
 ## Installation and execution
 
@@ -150,33 +45,29 @@ are rendered locally; no external images, fonts, or model services are required.
 
 1. **0:00–0:20:** Keep `(income, experience, certification) = (24, 2, 0)`.
    The original is **Rejected**, satisfying **0 / 3** conditions.
-2. **0:20–0:40:** Compare the two cards immediately: nearest valid `(25, 3, 0)`,
-   distance **0.30**, versus nearest feasible `(25, 2, 1)`, distance **1.10**.
-3. **0:40–1:00:** Toggle **Constraints** OFF and ON.
+2. **0:20–0:50:** Click **Generate Counterfactuals**. Point out the nearest
+   valid application `(25, 3, 0)` and its distance **0.30**.
+3. **0:50–1:20:** Toggle **Enable Real-world Constraints** OFF and ON.
    With the three-month limits ON, the recommendation becomes `(25, 2, 1)`,
    distance **1.10**: an extra year of experience cannot fit within a 0.25-year limit.
-4. **1:00–1:25:** Switch to Advanced → Sensitivity Analysis; change experience
-   normalization from **5** to **0.5**. The closest valid point becomes CF2;
-   CF1's distance rises to **2.10**. Predictions have not changed.
-5. **1:25–1:45:** Open Scenario Comparison and select **No Certificate**.
-   No feasible counterfactual exists; expand **Why this counterfactual?** for the
-   current calculation. Other scenarios retain their own results.
-6. **1:45–2:00:** Select **No Constraints** or restore defaults. Conclude: metric
-   and constraints determine the recommendation; acceptance alone is not actionability.
+4. **1:20–1:45:** Compare the certification slices and inspect a candidate's
+   distance calculation. The prediction-valid and feasible labels are different concepts.
+5. **1:45–2:00:** Disallow obtaining certification: no feasible counterfactual
+   exists. Conclude with the central message above.
 
-Constraints start **enabled**. Changing any input, scale, lambda, or feasibility
-setting immediately recomputes the results, including before Generate is clicked. The
+Constraints start **enabled**. After the first generation, changing any input,
+scale, lambda, or feasibility setting immediately recomputes the results. The
 table remains sortable and includes infeasible accepted candidates for comparison.
 
 ## Model and mathematical formulation
 
 An application is `x = (I, E, C)`:
 
-| Feature | Domain | Condition | Unit |
-|---|---|---|---|
-| Income `I` | Nonnegative, finite continuous value | `I >= 25` | Million VND/month |
-| Experience `E` | Nonnegative, finite continuous value | `E >= 3` | Years |
-| Certification `C` | `{0, 1}` | `C == 1` | Binary |
+| Feature             | Domain                               | Condition   | Unit              |
+| ------------------- | ------------------------------------ | ----------- | ----------------- |
+| Income `I`        | Nonnegative, finite continuous value | `I >= 25` | Million VND/month |
+| Experience `E`    | Nonnegative, finite continuous value | `E >= 3`  | Years             |
+| Certification `C` | `{0, 1}`                           | `C == 1`  | Binary            |
 
 The classifier is:
 
@@ -236,9 +127,8 @@ for each feature:
     if its condition fails: include the exact minimum satisfying value
 for point in itertools.product(all unique feature-value sets):
     preserve immutable context and validate domains
+    skip unchanged original and rejected points
     compute validity, distance contributions, sparsity, L, changes, feasibility
-    record the point in the complete diagnostic trace
-exclude unchanged original and rejected points from generated explanations
 rank accepted candidates by distance
 select the closest eligible candidate (filter by feasibility when enabled)
 if none is eligible: explicitly report no feasible counterfactual
@@ -246,19 +136,7 @@ if none is eligible: explicitly report no feasible counterfactual
 
 There are at most **eight** combinations. Already satisfied conditions never
 receive unnecessary changes. Distance ties prefer lower sparsity, then a stable
-feature-value ordering, shared by ranking and recommendation.
-`enumerate_search` is the shared implementation used by `generate_counterfactuals`
-and the step viewer, rather than an independent demonstration sequence. Its
-`SearchTrace` retains product-order evaluations and distance-ranked accepted
-changes. Rejected trace IDs are `Tn`.
-Already-accepted originals stop before enumeration with empty result/trace lists.
-
-V3 enumerates once per original application with default scales to establish stable
-dashboard CF IDs. `reassess_trace` reuses those applications and IDs when scales,
-lambda, or constraints change; it does not call `itertools.product` again. The
-unmodified V2 enumeration API still assigns IDs by its requested metric's ranking
-for compatibility. Dashboard IDs are identities within the current original, not
-current ranks; changing the original establishes a new set of identities.
+feature-value ordering; IDs reflect the current ranking.
 
 ### Why this enumeration finds an optimum here
 
@@ -282,7 +160,6 @@ Default **three-month** assumptions, relative to the current original:
 max_income_increase = 5.0       # million VND/month
 max_experience_increase = 0.25  # years; experience also cannot decrease
 can_obtain_certification = True
-income_cannot_decrease = True   # applied by V3 practical scenario definitions
 ```
 
 These limits are adjustable. Turning the toggle OFF ignores only optional
@@ -297,12 +174,12 @@ These are synthetic assumptions, **not verified real-world employment guarantees
 
 For original `(24, 2, 0)` the following applications are generated automatically:
 
-| ID | Income | Experience | Certification | Prediction | Distance | Sparsity | Three-month feasible |
-|---|---:|---:|---:|---|---:|---:|---|
-| CF1 | 25 | 3 | 0 | Accepted | 0.30 | 2 | No |
-| CF2 | 25 | 2 | 1 | Accepted | 1.10 | 2 | Yes |
-| CF3 | 24 | 3 | 1 | Accepted | 1.20 | 2 | No |
-| CF4 | 25 | 3 | 1 | Accepted | 1.30 | 3 | No |
+| ID  | Income | Experience | Certification | Prediction | Distance | Sparsity | Three-month feasible |
+| --- | -----: | ---------: | ------------: | ---------- | -------: | -------: | -------------------- |
+| CF1 |     25 |          3 |             0 | Accepted   |     0.30 |        2 | No                   |
+| CF2 |     25 |          2 |             1 | Accepted   |     1.10 |        2 | Yes                  |
+| CF3 |     24 |          3 |             1 | Accepted   |     1.20 |        2 | No                   |
+| CF4 |     25 |          3 |             1 | Accepted   |     1.30 |        3 | No                   |
 
 Worked calculations:
 
@@ -320,47 +197,24 @@ That example adapts to the current original and settings.
 ## Architecture and verification
 
 ```text
-app.py                    Shared dashboard shell, V2 Basic views, authoritative result cache
-dashboard_state.py        Persistent mode/scenario/custom settings and reset callbacks
-analytics_views.py        Sensitivity, scenario comparison, on-demand optimality explanations
-dashboard_details.py      Collapsed mathematical explanations, assumptions, attribution
-visualization.py          Exact Plotly regions, point layers, distance-sensitivity bars
+app.py                    Streamlit inputs, comparison table, recommendations, teaching notes
+visualization.py          Exact Plotly regions and certification-specific point layers
 core/model.py             Validated Application and two-of-three classifier
 core/distance.py          Manual normalization, contributions, sparsity, change descriptions
 core/constraints.py       Relative practical limits and immutable checks
-core/generator.py         Shared threshold enumeration/trace, ranking, recommendation
-core/sensitivity.py       Reassess cached points; stable identity, threshold costs, ranking insight
-core/scenarios.py         Presets and per-scenario results using the same evaluator/selector
+core/generator.py         Threshold enumeration, evaluation, ranking, recommendation
 tests/test_model.py       Thresholds, domains, contextual independence
 tests/test_distance.py    Worked examples, scales, changed-feature metrics
 tests/test_constraints.py Relative limits, no-solution cases, immutable enforcement
 tests/test_generator.py   Continuous inputs, validity-first selection, ranking, edge cases
-tests/test_search_trace.py Complete unsuccessful/successful enumeration and trace consistency
 tests/test_visualization.py Exact regions, certification slices, adaptive axes
-tests/test_app.py         Streamlit AppTest: cards, controls, search sync, selection, context
-tests/test_sensitivity.py  Metric example, stable IDs, tiny scales, ties, no regeneration
-tests/test_scenarios.py    Presets, Custom isolation, empty/accepted states, invariants
-tests/test_v3_app.py       Mode lifecycle, reset, scenario sync, metric updates, cache behavior
+tests/test_app.py         Streamlit AppTest: controls, reactive results, errors, context
 ```
 
 Business logic has no Streamlit dependency. Automated UI tests require no browser
 or running server. Plotly views use exact rectangles: with `C = 0`, acceptance
 requires both income and experience thresholds; with `C = 1`, either suffices.
-Both slices share axis extents. Points and highlight overlays are filtered by
-certification before plotting. The UI presents one selectable slice at a time.
-
-V3 retains the complete V2 test suite and adds core/Streamlit AppTest coverage,
-plus a headless Chromium check at **1366×768** and **390×844**: both default cards
-and the beginning of the decision chart fit the desktop viewport, narrow-screen
-cards stack without horizontal overflow, and tab/search/constraint interactions
-work without browser errors. No browser automation package is required to run
-the app or the pytest suite.
-
-The browser check also exercises both analytical tabs, the required 0.5-scale
-example, scenario switching, on-demand proof rendering, saved Custom settings,
-and reset, with external page requests blocked. Floating-point distances that
-exceed representable range are reported as validation errors rather than shown
-as infinite recommendations. Very small positive scales within that range work normally.
+Both slices share axis extents. Points are filtered by certification before plotting.
 
 ## Academic context, limitations, and attribution
 

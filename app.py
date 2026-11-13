@@ -16,34 +16,9 @@ from dashboard_state import (
     normalization_controls, reset_defaults, sync_scenario_selector,
 )
 from visualization import candidate_distance_figure, decision_region_figure
+from ui_theme import CSS
 
 STEPS = ("Original", "Thresholds", "Candidates", "Evaluation", "Feasibility", "Result")
-CSS = """
-<style>
-.cfx-title {font-size:1.6rem; font-weight:750; margin:0; line-height:1.3}
-.cfx-title small {font-size:.7rem; color:#64748b; vertical-align:middle}
-.cfx-status {display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem;
-  padding:.45rem .7rem; background:#f1f5fa; border-radius:8px; font-size:.85rem}
-.cfx-status .pass {color:#126344} .cfx-status .fail {color:#a83131}
-.cfx-card {border:1px solid #dce3ec; border-radius:12px; padding:.65rem .85rem;
-  background:#fff; min-width:0; height:100%; box-sizing:border-box}
-.cfx-card.active {border:2px solid #6e37a8; padding:calc(.65rem - 1px) calc(.85rem - 1px)}
-.cfx-card header {display:flex; justify-content:space-between; flex-wrap:wrap; gap:.25rem;
-  align-items:center; font-size:.85rem; font-weight:650}
-.cfx-card .tag {font-size:.65rem; color:#6e37a8; background:#f2eafa; border-radius:5px; padding:.1rem .35rem}
-.cfx-card .values {display:flex; justify-content:space-between; flex-wrap:wrap;
-  align-items:center; gap:.4rem; margin:.25rem 0; font-size:1.55rem; font-weight:650}
-.cfx-card .distance {font-size:1.2rem} .cfx-card small {font-size:.72rem; color:#64748b; font-weight:400}
-.cfx-card .changes {font-size:.78rem; color:#45556c; line-height:1.5}
-.cfx-nodes {display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:.5rem}
-.cfx-node {border:1px solid #dce3ec; border-radius:8px; padding:.6rem; font-size:.8rem}
-.cfx-node b {display:block; margin-bottom:.2rem} .cfx-node small {color:#64748b}
-@media(max-width:600px) {
-  .cfx-title {font-size:1.3rem} .cfx-card .values {font-size:1.3rem}
-  .cfx-status {gap:.35rem .65rem} .cfx-nodes {grid-template-columns:repeat(2,minmax(0,1fr))}
-}
-</style>
-"""
 
 
 def point_label(application: Application) -> str:
@@ -293,35 +268,37 @@ def main() -> None:
                        initial_sidebar_state="collapsed")
     initialize_state()
     st.html(CSS)
-    with st.container(gap="xsmall"):
-        heading, mode_column, configuration = st.columns([4, 2, 1], vertical_alignment="center")
-        with heading:
-            st.html('<h1 class="cfx-title">Counterfactual Explorer <small>V3 · XAI seminar</small></h1>')
-        with mode_column:
-            mode = st.radio("Mode", ["Basic", "Advanced"], key="mode", horizontal=True,
-                             label_visibility="collapsed")
-        with configuration:
-            try:
-                constraints, normalization, lambda_value, birth_year = settings()
-            except ValueError as error:
-                st.error(str(error))
-                st.stop()
-        income_col, experience_col, cert_col, button_col, constraint_col = st.columns(
-            [1.4, 1.4, 1, 1, 1.2], vertical_alignment="bottom",
-        )
-        income = income_col.number_input("Income (M VND)", min_value=0.0,
-                                         step=.1, format="%g", key="income",
-                                         help="Million VND/month. Condition: income ≥ 25.")
-        experience = experience_col.number_input("Experience (years)", min_value=0.0,
-                                                 step=.05, format="%g", key="experience",
-                                                 help="Continuous years. Condition: experience ≥ 3.")
-        certification = cert_col.selectbox("Certified", [0, 1], key="certification",
-                                            format_func=lambda value: "Yes" if value else "No")
-        recalculate = button_col.button("Generate", type="primary", key="generate", width="stretch",
-                                        help="Recalculate and restart the search trace. Results also update automatically.")
-        enabled = constraint_col.toggle("Constraints", key="constraints_enabled",
-                                         on_change=sync_scenario_selector,
-                                         help="Choose the active recommendation. Both comparison cards keep their own constraints.")
+    with st.container(gap="xsmall", key="dashboard_shell"):
+        with st.container(key="page_header"):
+            heading, mode_column, configuration = st.columns([4, 2, 1], vertical_alignment="center")
+            with heading:
+                st.html('<h1 class="cfx-title">Counterfactual Explorer <small>Explainable AI · Counterfactual Analysis</small></h1>')
+            with mode_column:
+                mode = st.radio("Mode", ["Basic", "Advanced"], key="mode", horizontal=True,
+                                 label_visibility="collapsed")
+            with configuration:
+                try:
+                    constraints, normalization, lambda_value, birth_year = settings()
+                except ValueError as error:
+                    st.error(str(error))
+                    st.stop()
+        with st.container(key="application_inputs"):
+            income_col, experience_col, cert_col, button_col, constraint_col = st.columns(
+                [1.4, 1.4, 1, 1, 1.2], vertical_alignment="bottom",
+            )
+            income = income_col.number_input("Income (M VND)", min_value=0.0,
+                                             step=.1, format="%g", key="income",
+                                             help="Million VND/month. Condition: income ≥ 25.")
+            experience = experience_col.number_input("Experience (years)", min_value=0.0,
+                                                     step=.05, format="%g", key="experience",
+                                                     help="Continuous years. Condition: experience ≥ 3.")
+            certification = cert_col.selectbox("Certified", [0, 1], key="certification",
+                                                format_func=lambda value: "Yes" if value else "No")
+            recalculate = button_col.button("Generate", type="primary", key="generate", width="stretch",
+                                            help="Recalculate and restart the search trace. Results also update automatically.")
+            enabled = constraint_col.toggle("Constraints", key="constraints_enabled",
+                                             on_change=sync_scenario_selector,
+                                             help="Choose the active recommendation. Both comparison cards keep their own constraints.")
         # Allocate positions first, then render analytical controls before computing.
         # This preserves results-first layout without a one-rerun calculation lag.
         status_container = st.container()
